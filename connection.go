@@ -4,13 +4,14 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
-	"github.com/Noooste/fhttp/http2"
-	tls "github.com/Noooste/utls"
 	"net"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Noooste/fhttp/http2"
+	tls "github.com/Noooste/utls"
 )
 
 type Conn struct {
@@ -225,15 +226,27 @@ func (s *Session) getProxyConn(conn *Conn, host string) (err error) {
 	connChan := make(chan net.Conn, 1)
 	errChan := make(chan error, 1)
 
+	done := false
 	defer close(connChan)
 	defer close(errChan)
+	defer func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		done = true
+	}()
 
 	go func() {
 		proxyConn, dialErr := s.ProxyDialer.DialContext(ctx, "tcp", host)
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if done {
+			return
+		}
 		if dialErr != nil {
 			errChan <- dialErr
+		} else {
+			connChan <- proxyConn
 		}
-		connChan <- proxyConn
 	}()
 
 	select {
@@ -283,6 +296,9 @@ func (s *Session) initConn(req *Request) (conn *Conn, err error) {
 			}
 		} else {
 			conn.Conn, err = (&net.Dialer{Timeout: conn.TimeOut}).DialContext(s.ctx, "tcp", host)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
